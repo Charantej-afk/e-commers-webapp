@@ -5,19 +5,13 @@ pipeline {
         // Jenkins credentials
         SONAR_TOKEN = credentials('SONAR_TOKEN')
         NEXUS_CRED  = credentials('NEXUS_CRED')
-        DOCKER_HUB  = credentials('DOCKER_HUB')
-
-        // App info
+        IMAGE       = "charantej/ecommerce-app"
         APP_NAME    = "ecommerce-app"
         VERSION     = "1.0.${BUILD_NUMBER}"
 
         // Internal Docker network endpoints
         SONAR_URL   = "http://sonarqube:9000"
         NEXUS_URL   = "http://nexus:8081"
-        IMAGE       = "charantej/ecommerce-app"
-
-        // DinD Docker host
-        DOCKER_HOST = "tcp://dind:2375"
     }
 
     stages {
@@ -41,7 +35,7 @@ pipeline {
 
         /* ------------------------ SONAR ------------------------ */
         stage('SonarQube Scan') {
-            steps {  
+            steps {
                 withSonarQubeEnv('My SonarQube Server') {
                     sh """
                         mvn sonar:sonar \
@@ -63,25 +57,29 @@ pipeline {
         /* ------------------------ UPLOAD TO NEXUS ------------------------ */
         stage('Upload WAR to Nexus') {
             steps {
-                sh """
-                    echo "Uploading WAR to Nexus..."
-                    curl -v -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
+                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USR', passwordVariable: 'NEXUS_PSW')]) {
+                    sh """
+                        echo "Uploading WAR to Nexus..."
+                        curl -v -u $NEXUS_USR:$NEXUS_PSW \
                         --upload-file target/${APP_NAME}.war \
                         ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
-                """
+                    """
+                }
             }
         }
 
         /* ------------------------ DOWNLOAD FROM NEXUS ------------------------ */
         stage('Download WAR from Nexus') {
             steps {
-                sh "rm -f ${APP_NAME}.war || true"
-                sh """
-                    echo "Downloading WAR from Nexus..."
-                    curl -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
+                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USR', passwordVariable: 'NEXUS_PSW')]) {
+                    sh """
+                        rm -f ${APP_NAME}.war || true
+                        echo "Downloading WAR from Nexus..."
+                        curl -u $NEXUS_USR:$NEXUS_PSW \
                         -o ${APP_NAME}.war \
                         ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
-                """
+                    """
+                }
             }
         }
 
@@ -89,8 +87,8 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh """
-                    docker -H ${DOCKER_HOST} build -t ${IMAGE}:${VERSION} .
-                    docker -H ${DOCKER_HOST} tag ${IMAGE}:${VERSION} ${IMAGE}:latest
+                    docker -H tcp://dind:2375 build -t ${IMAGE}:${VERSION} .
+                    docker -H tcp://dind:2375 tag ${IMAGE}:${VERSION} ${IMAGE}:latest
                 """
             }
         }
@@ -98,11 +96,13 @@ pipeline {
         /* ------------------------ PUSH DOCKER IMAGE ------------------------ */
         stage('Push Docker Image') {
             steps {
-                sh """
-                    echo ${DOCKER_HUB} | docker -H ${DOCKER_HOST} login -u charantej --password-stdin
-                    docker -H ${DOCKER_HOST} push ${IMAGE}:${VERSION}
-                    docker -H ${DOCKER_HOST} push ${IMAGE}:latest
-                """
+                withCredentials([string(credentialsId: 'DOCKER_HUB', variable: 'DOCKER_PWD')]) {
+                    sh """
+                        echo $DOCKER_PWD | docker -H tcp://dind:2375 login -u charantej --password-stdin
+                        docker -H tcp://dind:2375 push ${IMAGE}:${VERSION}
+                        docker -H tcp://dind:2375 push ${IMAGE}:latest
+                    """
+                }
             }
         }
 
@@ -110,8 +110,8 @@ pipeline {
         stage('Deploy App to Docker') {
             steps {
                 sh """
-                    docker -H ${DOCKER_HOST} rm -f ${APP_NAME} || true
-                    docker -H ${DOCKER_HOST} run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE}:latest
+                    docker -H tcp://dind:2375 rm -f ${APP_NAME} || true
+                    docker -H tcp://dind:2375 run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE}:latest
                 """
             }
         }
