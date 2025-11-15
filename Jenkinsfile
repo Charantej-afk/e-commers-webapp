@@ -2,42 +2,46 @@ pipeline {
     agent any
 
     environment {
+        // Jenkins credentials
         SONAR_TOKEN = credentials('SONAR_TOKEN')
         NEXUS_CRED  = credentials('NEXUS_CRED')
         DOCKER_HUB  = credentials('DOCKER_HUB')
 
-        APP_NAME = "ecommerce-app"
-        VERSION  = "1.0.${BUILD_NUMBER}"
-        IMAGE    = "charantej/ecommerce-app"
+        // App info
+        APP_NAME    = "ecommerce-app"
+        VERSION     = "1.0.${BUILD_NUMBER}"
 
-        SONAR_URL = "http://sonarqube:9000"
-        NEXUS_URL = "http://nexus:8081"
-
-        MAVEN_HOME = "/usr/share/maven"
+        // Internal Docker network endpoints
+        SONAR_URL   = "http://sonarqube:9000"
+        NEXUS_URL   = "http://nexus:8081"
+        IMAGE       = "charantej/ecommerce-app"
     }
 
     stages {
 
+        /* ------------------------ CHECKOUT ------------------------ */
         stage('Checkout Code') {
             steps {
-                git url: 'https://github.com/Charantej-afk/E-commers-repo.git', branch: 'main'
+                git url: 'https://github.com/Charantej-afk/e-commers-webapp.git', branch: 'main'
             }
         }
 
+        /* ------------------------ BUILD WAR ------------------------ */
         stage('Build WAR') {
             steps {
                 sh """
-                    ${MAVEN_HOME}/bin/mvn clean package -DskipTests
+                    mvn clean package -DskipTests
+                    ls -l target
                 """
             }
         }
 
+        /* ------------------------ SONAR ------------------------ */
         stage('SonarQube Scan') {
-            steps {
+            steps {  
                 withSonarQubeEnv('My SonarQube Server') {
                     sh """
-                        ${MAVEN_HOME}/bin/mvn sonar:sonar \
-                        -Dsonar.projectKey=ecommerce-app \
+                        mvn sonar:sonar \
                         -Dsonar.host.url=${SONAR_URL} \
                         -Dsonar.login=${SONAR_TOKEN}
                     """
@@ -53,9 +57,12 @@ pipeline {
             }
         }
 
+        /* ------------------------ UPLOAD TO NEXUS ------------------------ */
         stage('Upload WAR to Nexus') {
             steps {
                 sh """
+                    echo "Uploading WAR to Nexus..."
+
                     curl -v -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
                     --upload-file target/${APP_NAME}.war \
                     ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
@@ -63,11 +70,14 @@ pipeline {
             }
         }
 
-        stage('Download WAR') {
+        /* ------------------------ DOWNLOAD FROM NEXUS ------------------------ */
+        stage('Download WAR from Nexus') {
             steps {
                 sh "rm -f ${APP_NAME}.war || true"
 
                 sh """
+                    echo "Downloading WAR from Nexus..."
+
                     curl -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
                     -o ${APP_NAME}.war \
                     ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
@@ -75,6 +85,7 @@ pipeline {
             }
         }
 
+        /* ------------------------ BUILD DOCKER IMAGE ------------------------ */
         stage('Build Docker Image') {
             steps {
                 sh """
@@ -84,17 +95,20 @@ pipeline {
             }
         }
 
-        stage('Push Image') {
+        /* ------------------------ PUSH DOCKER IMAGE ------------------------ */
+        stage('Push Docker Image') {
             steps {
                 sh """
                     echo ${DOCKER_HUB} | docker login -u charantej --password-stdin
+
                     docker push ${IMAGE}:${VERSION}
                     docker push ${IMAGE}:latest
                 """
             }
         }
 
-        stage('Deploy App') {
+        /* ------------------------ DEPLOY ------------------------ */
+        stage('Deploy App to Docker') {
             steps {
                 sh """
                     docker rm -f ${APP_NAME} || true
@@ -104,6 +118,15 @@ pipeline {
                         ${IMAGE}:latest
                 """
             }
+        }
+    }
+
+    post {
+        success {
+            echo "🎉 Pipeline completed successfully!"
+        }
+        failure {
+            echo "❌ Pipeline failed!"
         }
     }
 }
