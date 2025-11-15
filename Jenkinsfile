@@ -5,11 +5,11 @@ pipeline {
         // App info
         APP_NAME    = "ecommerce-app"
         VERSION     = "1.0.${BUILD_NUMBER}"
-        IMAGE       = "charantej/ecommerce-app"
 
         // Internal Docker network endpoints
         SONAR_URL   = "http://sonarqube:9000"
         NEXUS_URL   = "http://nexus:8081"
+        IMAGE       = "charantejafk/ecommerce-app"
     }
 
     stages {
@@ -33,13 +33,15 @@ pipeline {
 
         /* ------------------------ SONAR ------------------------ */
         stage('SonarQube Scan') {
-            steps {  
-                withSonarQubeEnv('My SonarQube Server') {
-                    sh """
-                        mvn sonar:sonar \
-                        -Dsonar.host.url=${SONAR_URL} \
-                        -Dsonar.login=${SONAR_TOKEN}
-                    """
+            steps {
+                withCredentials([string(credentialsId: 'SONAR_TOKEN', variable: 'SONAR_TOKEN')]) {
+                    withSonarQubeEnv('My SonarQube Server') {
+                        sh """
+                            mvn sonar:sonar \
+                                -Dsonar.host.url=${SONAR_URL} \
+                                -Dsonar.login=$SONAR_TOKEN
+                        """
+                    }
                 }
             }
         }
@@ -55,10 +57,10 @@ pipeline {
         /* ------------------------ UPLOAD TO NEXUS ------------------------ */
         stage('Upload WAR to Nexus') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PWD')]) {
+                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PSW')]) {
                     sh """
                         echo "Uploading WAR to Nexus..."
-                        curl -v -u $NEXUS_USER:$NEXUS_PWD \
+                        curl -v -u $NEXUS_USER:$NEXUS_PSW \
                         --upload-file target/${APP_NAME}.war \
                         ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
                     """
@@ -69,11 +71,11 @@ pipeline {
         /* ------------------------ DOWNLOAD FROM NEXUS ------------------------ */
         stage('Download WAR from Nexus') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PWD')]) {
+                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PSW')]) {
                     sh """
                         rm -f ${APP_NAME}.war || true
                         echo "Downloading WAR from Nexus..."
-                        curl -u $NEXUS_USER:$NEXUS_PWD \
+                        curl -u $NEXUS_USER:$NEXUS_PSW \
                         -o ${APP_NAME}.war \
                         ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
                     """
@@ -94,9 +96,9 @@ pipeline {
         /* ------------------------ PUSH DOCKER IMAGE ------------------------ */
         stage('Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PWD')]) {
+                withCredentials([string(credentialsId: 'DOCKER_HUB', variable: 'DOCKER_PWD')]) {
                     sh """
-                        echo $DOCKER_PWD | docker -H tcp://dind:2375 login -u $DOCKER_USER --password-stdin
+                        echo $DOCKER_PWD | docker -H tcp://dind:2375 login -u charantejafk --password-stdin
                         docker -H tcp://dind:2375 push ${IMAGE}:${VERSION}
                         docker -H tcp://dind:2375 push ${IMAGE}:latest
                     """
@@ -109,9 +111,7 @@ pipeline {
             steps {
                 sh """
                     docker -H tcp://dind:2375 rm -f ${APP_NAME} || true
-                    docker -H tcp://dind:2375 run -d --name ${APP_NAME} \
-                        -p 8080:8080 \
-                        ${IMAGE}:latest
+                    docker -H tcp://dind:2375 run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE}:latest
                 """
             }
         }
