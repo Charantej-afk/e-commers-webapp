@@ -2,60 +2,65 @@ pipeline {
     agent any
 
     environment {
-        // Jenkins credentials
+        // Credentials
         SONAR_TOKEN = credentials('SONAR_TOKEN')
         NEXUS_CRED  = credentials('NEXUS_CRED')
         DOCKER_HUB  = credentials('DOCKER_HUB')
 
-        // App info
+        // App Info
         APP_NAME    = "ecommerce-app"
+        IMAGE       = "charantej/ecommerce-app"
         VERSION     = "1.0.${BUILD_NUMBER}"
 
-        // Internal service URLs inside Docker network
+        // Internal Docker Network URLs
         SONAR_URL   = "http://sonarqube:9000"
         NEXUS_URL   = "http://nexus:8081"
 
-        // Docker DinD daemon
-        DOCKER_HOST = "tcp://dind:2375"
-
-        IMAGE       = "charantej/ecommerce-app"
+        // Maven installed inside Jenkins container
+        MAVEN_HOME  = "/usr/share/maven"
     }
 
     stages {
 
-        /* ------------------------ CHECKOUT ------------------------ */
+        /* ----------------------------------------------------------
+         * CHECKOUT
+         * ---------------------------------------------------------- */
         stage('Checkout Code') {
             steps {
                 git url: 'https://github.com/Charantej-afk/E-commeres-repo.git', branch: 'main'
             }
         }
 
-        /* ------------------------ BUILD WAR USING MAVEN CONTAINER ------------------------ */
-        stage('Maven Build') {
-            agent {
-                docker {
-                    image 'maven:3.8.6-openjdk-17'
-                    args '-v $WORKSPACE:/workspace -w /workspace'
-                }
-            }
+        /* ----------------------------------------------------------
+         * MAVEN BUILD
+         * ---------------------------------------------------------- */
+        stage('Build WAR using Maven') {
             steps {
-                sh "mvn clean package -DskipTests"
+                sh """
+                    ${MAVEN_HOME}/bin/mvn clean package -DskipTests
+                """
             }
         }
 
-        /* ------------------------ SONAR SCAN ------------------------ */
+        /* ----------------------------------------------------------
+         * SONARQUBE ANALYSIS
+         * ---------------------------------------------------------- */
         stage('SonarQube Scan') {
             steps {
                 withSonarQubeEnv('My SonarQube Server') {
                     sh """
-                        mvn sonar:sonar \
-                        -Dsonar.host.url=${SONAR_URL} \
-                        -Dsonar.login=${SONAR_TOKEN}
+                        ${MAVEN_HOME}/bin/mvn sonar:sonar \
+                          -Dsonar.projectKey=ecommerce-app \
+                          -Dsonar.host.url=${SONAR_URL} \
+                          -Dsonar.login=${SONAR_TOKEN}
                     """
                 }
             }
         }
 
+        /* ----------------------------------------------------------
+         * QUALITY GATE
+         * ---------------------------------------------------------- */
         stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -64,7 +69,9 @@ pipeline {
             }
         }
 
-        /* ------------------------ UPLOAD WAR TO NEXUS ------------------------ */
+        /* ----------------------------------------------------------
+         * UPLOAD WAR TO NEXUS
+         * ---------------------------------------------------------- */
         stage('Upload WAR to Nexus') {
             steps {
                 sh """
@@ -75,9 +82,13 @@ pipeline {
             }
         }
 
-        /* ------------------------ DOWNLOAD WAR FROM NEXUS ------------------------ */
+        /* ----------------------------------------------------------
+         * DOWNLOAD WAR FROM NEXUS
+         * ---------------------------------------------------------- */
         stage('Download WAR from Nexus') {
             steps {
+                sh "rm -f ${APP_NAME}.war || true"
+
                 sh """
                     curl -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
                     -o ${APP_NAME}.war \
@@ -86,7 +97,9 @@ pipeline {
             }
         }
 
-        /* ------------------------ BUILD DOCKER IMAGE USING DinD ------------------------ */
+        /* ----------------------------------------------------------
+         * BUILD DOCKER IMAGE
+         * ---------------------------------------------------------- */
         stage('Build Docker Image') {
             steps {
                 sh """
@@ -96,23 +109,31 @@ pipeline {
             }
         }
 
-        /* ------------------------ PUSH TO DOCKER HUB ------------------------ */
+        /* ----------------------------------------------------------
+         * PUSH DOCKER IMAGE
+         * ---------------------------------------------------------- */
         stage('Push Docker Image') {
             steps {
                 sh """
                     echo ${DOCKER_HUB} | docker login -u charantej --password-stdin
+
                     docker push ${IMAGE}:${VERSION}
                     docker push ${IMAGE}:latest
                 """
             }
         }
 
-        /* ------------------------ DEPLOY CONTAINER ------------------------ */
-        stage('Deploy to Docker') {
+        /* ----------------------------------------------------------
+         * DEPLOY APPLICATION
+         * ---------------------------------------------------------- */
+        stage('Deploy App to Docker') {
             steps {
                 sh """
                     docker rm -f ${APP_NAME} || true
-                    docker run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE}:latest
+
+                    docker run -d --name ${APP_NAME} \
+                        -p 8080:8080 \
+                        ${IMAGE}:latest
                 """
             }
         }
