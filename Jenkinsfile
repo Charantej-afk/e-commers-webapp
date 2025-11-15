@@ -15,6 +15,9 @@ pipeline {
         SONAR_URL   = "http://sonarqube:9000"
         NEXUS_URL   = "http://nexus:8081"
         IMAGE       = "charantej/ecommerce-app"
+
+        // DinD Docker host
+        DOCKER_HOST = "tcp://dind:2375"
     }
 
     stages {
@@ -62,10 +65,9 @@ pipeline {
             steps {
                 sh """
                     echo "Uploading WAR to Nexus..."
-
                     curl -v -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
-                    --upload-file target/${APP_NAME}.war \
-                    ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
+                        --upload-file target/${APP_NAME}.war \
+                        ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
                 """
             }
         }
@@ -74,13 +76,11 @@ pipeline {
         stage('Download WAR from Nexus') {
             steps {
                 sh "rm -f ${APP_NAME}.war || true"
-
                 sh """
                     echo "Downloading WAR from Nexus..."
-
                     curl -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
-                    -o ${APP_NAME}.war \
-                    ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
+                        -o ${APP_NAME}.war \
+                        ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
                 """
             }
         }
@@ -89,8 +89,8 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh """
-                    docker build -t ${IMAGE}:${VERSION} .
-                    docker tag ${IMAGE}:${VERSION} ${IMAGE}:latest
+                    docker -H ${DOCKER_HOST} build -t ${IMAGE}:${VERSION} .
+                    docker -H ${DOCKER_HOST} tag ${IMAGE}:${VERSION} ${IMAGE}:latest
                 """
             }
         }
@@ -99,10 +99,9 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 sh """
-                    echo ${DOCKER_HUB} | docker login -u charantej --password-stdin
-
-                    docker push ${IMAGE}:${VERSION}
-                    docker push ${IMAGE}:latest
+                    echo ${DOCKER_HUB} | docker -H ${DOCKER_HOST} login -u charantej --password-stdin
+                    docker -H ${DOCKER_HOST} push ${IMAGE}:${VERSION}
+                    docker -H ${DOCKER_HOST} push ${IMAGE}:latest
                 """
             }
         }
@@ -111,11 +110,8 @@ pipeline {
         stage('Deploy App to Docker') {
             steps {
                 sh """
-                    docker rm -f ${APP_NAME} || true
-
-                    docker run -d --name ${APP_NAME} \
-                        -p 8080:8080 \
-                        ${IMAGE}:latest
+                    docker -H ${DOCKER_HOST} rm -f ${APP_NAME} || true
+                    docker -H ${DOCKER_HOST} run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE}:latest
                 """
             }
         }
