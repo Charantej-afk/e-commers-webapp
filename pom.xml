@@ -10,8 +10,7 @@
     <packaging>war</packaging>
 
     <dependencies>
-
-        <!-- Servlet API for servlets/JSP -->
+        <!-- Servlet API -->
         <dependency>
             <groupId>javax.servlet</groupId>
             <artifactId>javax.servlet-api</artifactId>
@@ -19,21 +18,19 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- JSP support -->
+        <!-- JSP Support -->
         <dependency>
             <groupId>javax.servlet.jsp</groupId>
             <artifactId>javax.servlet.jsp-api</artifactId>
             <version>2.3.3</version>
             <scope>provided</scope>
         </dependency>
-
     </dependencies>
 
     <build>
         <finalName>ecommerce-app</finalName>
 
         <plugins>
-            <!-- Required for WAR build -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-war-plugin</artifactId>
