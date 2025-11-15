@@ -1,122 +1,71 @@
 pipeline {
-    agent any
+    agent { label 'docker' }
+
+    tools {
+        jdk 'JDK17'
+        maven 'Maven'
+    }
 
     environment {
-        SONAR_TOKEN = credentials('SONAR_TOKEN')
-        NEXUS_CRED  = credentials('NEXUS_CRED')
-        DOCKER_HUB  = credentials('DOCKER_HUB')
-
         APP_NAME = "ecommerce-app"
-        VERSION  = "1.0.${BUILD_NUMBER}"
-
-        SONAR_URL = "http://sonarqube:9000"
-        NEXUS_URL = "http://nexus:8081"
-
-        IMAGE = "charantej/ecommerce-app"
+        DOCKER_IMAGE = "ecommerce-app-image"
     }
 
     stages {
 
         stage('Checkout Code') {
             steps {
-                git url: 'https://github.com/Charantej-afk/E-commeres-repo.git', branch: 'main'
+                echo "Pulling code from GitHub..."
+                git branch: 'main', url: 'https://github.com/Charantej-afk/E-commerce-project-springBoot.git'
             }
         }
 
-        stage('Maven Build') {
+        stage('Build WAR') {
             steps {
-                script {
-                    mvnHome = tool 'Maven-3'
-                }
-                sh """
-                    ${mvnHome}/bin/mvn clean package -DskipTests
-                    cp target/*.war target/${APP_NAME}-${VERSION}.war
-                """
-            }
-        }
-
-        stage('SonarQube Scan') {
-            steps {
-                script { mvnHome = tool 'Maven-3' }
-                withSonarQubeEnv('My SonarQube Server') {
-                    sh """
-                        ${mvnHome}/bin/mvn sonar:sonar \
-                        -Dsonar.projectKey=ecommerce-app \
-                        -Dsonar.host.url=${SONAR_URL} \
-                        -Dsonar.login=${SONAR_TOKEN}
-                    """
-                }
-            }
-        }
-
-        stage('Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
-
-        stage('Upload WAR to Nexus') {
-            steps {
-                sh """
-                    curl -v -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
-                    --upload-file target/${APP_NAME}-${VERSION}.war \
-                    ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
-                """
-            }
-        }
-
-        stage('Download WAR from Nexus') {
-            steps {
-                sh "rm -f ${APP_NAME}.war || true"
-
-                sh """
-                    curl -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
-                    -o ${APP_NAME}.war \
-                    ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
-                """
+                echo "Building WAR file using Maven..."
+                sh 'mvn clean package -DskipTests'
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build -t ${IMAGE}:${VERSION} .
-                    docker tag ${IMAGE}:${VERSION} ${IMAGE}:latest
-                """
+                echo "Building Docker image..."
+                sh "docker build -t ${DOCKER_IMAGE} ."
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Stop Existing Container') {
             steps {
-                sh """
-                    echo ${DOCKER_HUB} | docker login -u charantej --password-stdin
-                    docker push ${IMAGE}:${VERSION}
-                    docker push ${IMAGE}:latest
-                """
+                script {
+                    echo "Stopping existing container (if running)..."
+                    sh """
+                        CONTAINER_ID=\$(docker ps -aq --filter name=${APP_NAME})
+                        if [ ! -z "\$CONTAINER_ID" ]; then
+                            docker stop \$CONTAINER_ID || true
+                            docker rm \$CONTAINER_ID || true
+                        fi
+                    """
+                }
             }
         }
 
-        stage('Deploy to Docker') {
+        stage('Run New Container') {
             steps {
+                echo "Starting new container..."
                 sh """
-                    docker rm -f ${APP_NAME} || true
-
-                    docker run -d --name ${APP_NAME} \
-                        -p 8080:8080 \
-                        ${IMAGE}:latest
+                    docker run -d --name ${APP_NAME} -p 8080:8080 ${DOCKER_IMAGE}
                 """
             }
         }
+
     }
 
     post {
         success {
-            echo "🎉 Pipeline completed successfully!"
+            echo "Deployment completed successfully!"
         }
         failure {
-            echo "❌ Pipeline failed!"
+            echo "Pipeline failed. Check logs!"
         }
     }
 }
