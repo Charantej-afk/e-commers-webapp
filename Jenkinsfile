@@ -1,45 +1,54 @@
 pipeline {
-
-    agent {
-        docker {
-            image 'maven:3.8.6-openjdk-17'
-            args '-v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
+    agent any
 
     environment {
+        // Jenkins credentials
         SONAR_TOKEN = credentials('SONAR_TOKEN')
         NEXUS_CRED  = credentials('NEXUS_CRED')
         DOCKER_HUB  = credentials('DOCKER_HUB')
 
+        // App info
         APP_NAME    = "ecommerce-app"
-        IMAGE_NAME  = "charantej/ecommerce-app"
         VERSION     = "1.0.${BUILD_NUMBER}"
 
+        // Internal service URLs inside Docker network
         SONAR_URL   = "http://sonarqube:9000"
         NEXUS_URL   = "http://nexus:8081"
+
+        // Docker DinD daemon
+        DOCKER_HOST = "tcp://dind:2375"
+
+        IMAGE       = "charantej/ecommerce-app"
     }
 
     stages {
 
+        /* ------------------------ CHECKOUT ------------------------ */
         stage('Checkout Code') {
             steps {
                 git url: 'https://github.com/Charantej-afk/E-commeres-repo.git', branch: 'main'
             }
         }
 
-        stage('Build Maven WAR') {
+        /* ------------------------ BUILD WAR USING MAVEN CONTAINER ------------------------ */
+        stage('Maven Build') {
+            agent {
+                docker {
+                    image 'maven:3.8.6-openjdk-17'
+                    args '-v $WORKSPACE:/workspace -w /workspace'
+                }
+            }
             steps {
-                sh 'mvn clean package -DskipTests'
+                sh "mvn clean package -DskipTests"
             }
         }
 
-        stage('SonarQube Analysis') {
+        /* ------------------------ SONAR SCAN ------------------------ */
+        stage('SonarQube Scan') {
             steps {
                 withSonarQubeEnv('My SonarQube Server') {
                     sh """
-                    mvn sonar:sonar \
-                        -Dsonar.projectKey=${APP_NAME} \
+                        mvn sonar:sonar \
                         -Dsonar.host.url=${SONAR_URL} \
                         -Dsonar.login=${SONAR_TOKEN}
                     """
@@ -55,76 +64,66 @@ pipeline {
             }
         }
 
+        /* ------------------------ UPLOAD WAR TO NEXUS ------------------------ */
         stage('Upload WAR to Nexus') {
             steps {
-                sh "ls -l target/"
-
-                nexusPublisher nexusInstanceId: 'Nexus',
-                nexusRepositoryId: 'maven-releases',
-                items: [[
-                    $class: 'MavenDeploymentItem',
-                    artifactId: "${APP_NAME}",
-                    classifier: '',
-                    file: "target/${APP_NAME}.war",
-                    groupId: "com.ecommerce",
-                    version: "${VERSION}"
-                ]]
+                sh """
+                    curl -v -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
+                    --upload-file target/${APP_NAME}-${VERSION}.war \
+                    ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
+                """
             }
         }
 
+        /* ------------------------ DOWNLOAD WAR FROM NEXUS ------------------------ */
         stage('Download WAR from Nexus') {
             steps {
-                sh "rm -f ecommerce-app.war || true"
-
-                nexusArtifactDownloader(
-                    artifacts: [[
-                        artifactId: "${APP_NAME}",
-                        classifier: '',
-                        extension: 'war',
-                        groupId: 'com.ecommerce',
-                        version: "${VERSION}"
-                    ]],
-                    credentialsId: 'NEXUS_CRED',
-                    nexusUrl: "${NEXUS_URL}",
-                    repository: 'maven-releases',
-                    targetDirectory: '.'
-                )
-
-                sh "mv *.war ecommerce-app.war"
+                sh """
+                    curl -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
+                    -o ${APP_NAME}.war \
+                    ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
+                """
             }
         }
 
+        /* ------------------------ BUILD DOCKER IMAGE USING DinD ------------------------ */
         stage('Build Docker Image') {
             steps {
                 sh """
-                docker build -t ${IMAGE_NAME}:${VERSION} .
-                docker tag ${IMAGE_NAME}:${VERSION} ${IMAGE_NAME}:latest
+                    docker build -t ${IMAGE}:${VERSION} .
+                    docker tag ${IMAGE}:${VERSION} ${IMAGE}:latest
                 """
             }
         }
 
+        /* ------------------------ PUSH TO DOCKER HUB ------------------------ */
         stage('Push Docker Image') {
             steps {
                 sh """
-                echo ${DOCKER_HUB} | docker login -u charantej --password-stdin
-                docker push ${IMAGE_NAME}:${VERSION}
-                docker push ${IMAGE_NAME}:latest
+                    echo ${DOCKER_HUB} | docker login -u charantej --password-stdin
+                    docker push ${IMAGE}:${VERSION}
+                    docker push ${IMAGE}:latest
                 """
             }
         }
 
-        stage('Deploy Application') {
+        /* ------------------------ DEPLOY CONTAINER ------------------------ */
+        stage('Deploy to Docker') {
             steps {
                 sh """
-                docker rm -f ${APP_NAME} || true
-                docker run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE_NAME}:latest
+                    docker rm -f ${APP_NAME} || true
+                    docker run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE}:latest
                 """
             }
         }
     }
 
     post {
-        success { echo "🎉 Pipeline Successful!" }
-        failure { echo "❌ Pipeline Failed" }
+        success {
+            echo "🎉 Pipeline completed successfully!"
+        }
+        failure {
+            echo "❌ Pipeline failed!"
+        }
     }
 }
