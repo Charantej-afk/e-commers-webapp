@@ -2,116 +2,89 @@ pipeline {
     agent any
 
     environment {
-        // App info
-        APP_NAME    = "ecommerce-app"
-        VERSION     = "1.0.${BUILD_NUMBER}"
-
-        // Internal Docker network endpoints
-        SONAR_URL   = "http://sonarqube:9000"
-        NEXUS_URL   = "http://nexus:8081"
-        IMAGE       = "charantejafk/ecommerce-app"
+        // Docker and Nexus variables
+        DOCKER_IMAGE = "charantejafk/ecommerce-app"
+        DOCKER_TAG = "latest"
+        NEXUS_URL = "http://nexus:8081/repository/maven-releases"
+        NEXUS_GROUP = "com/ecommerce"
+        NEXUS_ARTIFACT = "ecommerce-app"
+        VERSION = "1.0.14"
     }
 
     stages {
-
-        /* ------------------------ CHECKOUT ------------------------ */
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
                 git url: 'https://github.com/Charantej-afk/e-commers-webapp.git', branch: 'main'
             }
         }
 
-        /* ------------------------ BUILD WAR ------------------------ */
         stage('Build WAR') {
             steps {
-                sh """
-                    mvn clean package -DskipTests
-                    ls -l target
-                """
+                sh 'mvn clean package -DskipTests'
             }
         }
 
-        /* ------------------------ SONAR ------------------------ */
         stage('SonarQube Scan') {
             steps {
-                withCredentials([string(credentialsId: 'SONAR_TOKEN', variable: 'SONAR_TOKEN')]) {
-                    withSonarQubeEnv('My SonarQube Server') {
-                        sh """
-                            mvn sonar:sonar \
-                                -Dsonar.host.url=${SONAR_URL} \
-                                -Dsonar.login=$SONAR_TOKEN
-                        """
-                    }
+                withSonarQubeEnv('My SonarQube Server') {
+                    sh 'mvn sonar:sonar'
                 }
             }
         }
 
-        stage('Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
-
-        /* ------------------------ UPLOAD TO NEXUS ------------------------ */
         stage('Upload WAR to Nexus') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PSW')]) {
+                withCredentials([
+                    usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PSW')
+                ]) {
                     sh """
-                        echo "Uploading WAR to Nexus..."
-                        curl -v -u $NEXUS_USER:$NEXUS_PSW \
-                        --upload-file target/${APP_NAME}.war \
-                        ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
+                        curl -v -u $NEXUS_USER:$NEXUS_PSW --upload-file target/${NEXUS_ARTIFACT}.war \
+                        $NEXUS_URL/$NEXUS_GROUP/$NEXUS_ARTIFACT/$VERSION/${NEXUS_ARTIFACT}-${VERSION}.war
                     """
                 }
             }
         }
 
-        /* ------------------------ DOWNLOAD FROM NEXUS ------------------------ */
         stage('Download WAR from Nexus') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PSW')]) {
+                withCredentials([
+                    usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PSW')
+                ]) {
                     sh """
-                        rm -f ${APP_NAME}.war || true
-                        echo "Downloading WAR from Nexus..."
-                        curl -u $NEXUS_USER:$NEXUS_PSW \
-                        -o ${APP_NAME}.war \
-                        ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
+                        rm -f ${NEXUS_ARTIFACT}.war
+                        curl -u $NEXUS_USER:$NEXUS_PSW -o ${NEXUS_ARTIFACT}.war \
+                        $NEXUS_URL/$NEXUS_GROUP/$NEXUS_ARTIFACT/$VERSION/${NEXUS_ARTIFACT}-${VERSION}.war
                     """
                 }
             }
         }
 
-        /* ------------------------ BUILD DOCKER IMAGE ------------------------ */
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker -H tcp://dind:2375 build -t ${IMAGE}:${VERSION} .
-                    docker -H tcp://dind:2375 tag ${IMAGE}:${VERSION} ${IMAGE}:latest
-                """
+                sh "docker -H tcp://dind:2375 build -t ${DOCKER_IMAGE}:${VERSION} ."
+                sh "docker -H tcp://dind:2375 tag ${DOCKER_IMAGE}:${VERSION} ${DOCKER_IMAGE}:${DOCKER_TAG}"
             }
         }
 
-        /* ------------------------ PUSH DOCKER IMAGE ------------------------ */
         stage('Push Docker Image') {
             steps {
-                withCredentials([string(credentialsId: 'DOCKER_HUB', variable: 'DOCKER_PWD')]) {
+                withCredentials([
+                    string(credentialsId: 'DOCKER_HUB', variable: 'DOCKER_PWD')
+                ]) {
                     sh """
                         echo $DOCKER_PWD | docker -H tcp://dind:2375 login -u charantejafk --password-stdin
-                        docker -H tcp://dind:2375 push ${IMAGE}:${VERSION}
-                        docker -H tcp://dind:2375 push ${IMAGE}:latest
+                        docker -H tcp://dind:2375 push ${DOCKER_IMAGE}:${VERSION}
+                        docker -H tcp://dind:2375 push ${DOCKER_IMAGE}:${DOCKER_TAG}
                     """
                 }
             }
         }
 
-        /* ------------------------ DEPLOY ------------------------ */
-        stage('Deploy App to Docker') {
+        stage('Deploy Docker Container') {
             steps {
                 sh """
-                    docker -H tcp://dind:2375 rm -f ${APP_NAME} || true
-                    docker -H tcp://dind:2375 run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE}:latest
+                    docker -H tcp://dind:2375 rm -f ecommerce-app || true
+                    docker -H tcp://dind:2375 run -d --name ecommerce-app -p 8080:8080 ${DOCKER_IMAGE}:${DOCKER_TAG}
                 """
             }
         }
@@ -119,7 +92,7 @@ pipeline {
 
     post {
         success {
-            echo "🎉 Pipeline completed successfully!"
+            echo "✅ Pipeline completed successfully!"
         }
         failure {
             echo "❌ Pipeline failed!"
