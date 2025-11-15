@@ -2,12 +2,10 @@ pipeline {
     agent any
 
     environment {
-        // Jenkins credentials
-        SONAR_TOKEN = credentials('SONAR_TOKEN')
-        NEXUS_CRED  = credentials('NEXUS_CRED')
-        IMAGE       = "charantej/ecommerce-app"
+        // App info
         APP_NAME    = "ecommerce-app"
         VERSION     = "1.0.${BUILD_NUMBER}"
+        IMAGE       = "charantej/ecommerce-app"
 
         // Internal Docker network endpoints
         SONAR_URL   = "http://sonarqube:9000"
@@ -35,7 +33,7 @@ pipeline {
 
         /* ------------------------ SONAR ------------------------ */
         stage('SonarQube Scan') {
-            steps {
+            steps {  
                 withSonarQubeEnv('My SonarQube Server') {
                     sh """
                         mvn sonar:sonar \
@@ -57,10 +55,10 @@ pipeline {
         /* ------------------------ UPLOAD TO NEXUS ------------------------ */
         stage('Upload WAR to Nexus') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USR', passwordVariable: 'NEXUS_PSW')]) {
+                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PWD')]) {
                     sh """
                         echo "Uploading WAR to Nexus..."
-                        curl -v -u $NEXUS_USR:$NEXUS_PSW \
+                        curl -v -u $NEXUS_USER:$NEXUS_PWD \
                         --upload-file target/${APP_NAME}.war \
                         ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
                     """
@@ -71,11 +69,11 @@ pipeline {
         /* ------------------------ DOWNLOAD FROM NEXUS ------------------------ */
         stage('Download WAR from Nexus') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USR', passwordVariable: 'NEXUS_PSW')]) {
+                withCredentials([usernamePassword(credentialsId: 'NEXUS_CRED', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PWD')]) {
                     sh """
                         rm -f ${APP_NAME}.war || true
                         echo "Downloading WAR from Nexus..."
-                        curl -u $NEXUS_USR:$NEXUS_PSW \
+                        curl -u $NEXUS_USER:$NEXUS_PWD \
                         -o ${APP_NAME}.war \
                         ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
                     """
@@ -96,9 +94,9 @@ pipeline {
         /* ------------------------ PUSH DOCKER IMAGE ------------------------ */
         stage('Push Docker Image') {
             steps {
-                withCredentials([string(credentialsId: 'DOCKER_HUB', variable: 'DOCKER_PWD')]) {
+                withCredentials([usernamePassword(credentialsId: 'DOCKER_HUB', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PWD')]) {
                     sh """
-                        echo $DOCKER_PWD | docker -H tcp://dind:2375 login -u charantej --password-stdin
+                        echo $DOCKER_PWD | docker -H tcp://dind:2375 login -u $DOCKER_USER --password-stdin
                         docker -H tcp://dind:2375 push ${IMAGE}:${VERSION}
                         docker -H tcp://dind:2375 push ${IMAGE}:latest
                     """
@@ -111,7 +109,9 @@ pipeline {
             steps {
                 sh """
                     docker -H tcp://dind:2375 rm -f ${APP_NAME} || true
-                    docker -H tcp://dind:2375 run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE}:latest
+                    docker -H tcp://dind:2375 run -d --name ${APP_NAME} \
+                        -p 8080:8080 \
+                        ${IMAGE}:latest
                 """
             }
         }
