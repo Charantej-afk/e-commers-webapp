@@ -2,38 +2,28 @@ pipeline {
     agent any
 
     environment {
-        // Credentials
         SONAR_TOKEN = credentials('SONAR_TOKEN')
         NEXUS_CRED  = credentials('NEXUS_CRED')
         DOCKER_HUB  = credentials('DOCKER_HUB')
 
-        // App Info
-        APP_NAME    = "ecommerce-app"
-        IMAGE       = "charantej/ecommerce-app"
-        VERSION     = "1.0.${BUILD_NUMBER}"
+        APP_NAME = "ecommerce-app"
+        IMAGE    = "charantej/ecommerce-app"
+        VERSION  = "1.0.${BUILD_NUMBER}"
 
-        // Internal Docker Network URLs
-        SONAR_URL   = "http://sonarqube:9000"
-        NEXUS_URL   = "http://nexus:8081"
+        SONAR_URL = "http://sonarqube:9000"
+        NEXUS_URL = "http://nexus:8081"
 
-        // Maven installed inside Jenkins container
-        MAVEN_HOME  = "/usr/share/maven"
+        MAVEN_HOME = "/usr/share/maven"
     }
 
     stages {
 
-        /* ----------------------------------------------------------
-         * CHECKOUT
-         * ---------------------------------------------------------- */
         stage('Checkout Code') {
             steps {
                 git url: 'https://github.com/Charantej-afk/E-commeres-repo.git', branch: 'main'
             }
         }
 
-        /* ----------------------------------------------------------
-         * MAVEN BUILD
-         * ---------------------------------------------------------- */
         stage('Build WAR using Maven') {
             steps {
                 sh """
@@ -42,9 +32,6 @@ pipeline {
             }
         }
 
-        /* ----------------------------------------------------------
-         * SONARQUBE ANALYSIS
-         * ---------------------------------------------------------- */
         stage('SonarQube Scan') {
             steps {
                 withSonarQubeEnv('My SonarQube Server') {
@@ -58,9 +45,6 @@ pipeline {
             }
         }
 
-        /* ----------------------------------------------------------
-         * QUALITY GATE
-         * ---------------------------------------------------------- */
         stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -69,22 +53,16 @@ pipeline {
             }
         }
 
-        /* ----------------------------------------------------------
-         * UPLOAD WAR TO NEXUS
-         * ---------------------------------------------------------- */
         stage('Upload WAR to Nexus') {
             steps {
                 sh """
                     curl -v -u ${NEXUS_CRED_USR}:${NEXUS_CRED_PSW} \
-                    --upload-file target/${APP_NAME}-${VERSION}.war \
+                    --upload-file target/${APP_NAME}.war \
                     ${NEXUS_URL}/repository/maven-releases/com/ecommerce/${APP_NAME}/${VERSION}/${APP_NAME}-${VERSION}.war
                 """
             }
         }
 
-        /* ----------------------------------------------------------
-         * DOWNLOAD WAR FROM NEXUS
-         * ---------------------------------------------------------- */
         stage('Download WAR from Nexus') {
             steps {
                 sh "rm -f ${APP_NAME}.war || true"
@@ -97,9 +75,6 @@ pipeline {
             }
         }
 
-        /* ----------------------------------------------------------
-         * BUILD DOCKER IMAGE
-         * ---------------------------------------------------------- */
         stage('Build Docker Image') {
             steps {
                 sh """
@@ -109,23 +84,16 @@ pipeline {
             }
         }
 
-        /* ----------------------------------------------------------
-         * PUSH DOCKER IMAGE
-         * ---------------------------------------------------------- */
         stage('Push Docker Image') {
             steps {
                 sh """
                     echo ${DOCKER_HUB} | docker login -u charantej --password-stdin
-
                     docker push ${IMAGE}:${VERSION}
                     docker push ${IMAGE}:latest
                 """
             }
         }
 
-        /* ----------------------------------------------------------
-         * DEPLOY APPLICATION
-         * ---------------------------------------------------------- */
         stage('Deploy App to Docker') {
             steps {
                 sh """
@@ -141,10 +109,10 @@ pipeline {
 
     post {
         success {
-            echo "🎉 Pipeline completed successfully!"
+            echo "🎉 Pipeline Successfully Completed!"
         }
         failure {
-            echo "❌ Pipeline failed!"
+            echo "❌ Pipeline Failed"
         }
     }
 }
